@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -18,16 +19,44 @@ except ImportError:  # pragma: no cover
     websocket = None
 
 
+IP_ADDRESS_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+SECRETISH_RE = re.compile(r"(?i)\b(api[_-]?key|secret|token|password|signature)=([^&\s]+)")
+
+
+def env_float(name: str, default: float, *, minimum: float, maximum: float) -> float:
+    try:
+        value = float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+def env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    return max(minimum, min(maximum, value))
+
+
+def public_error(message: str | None) -> str | None:
+    if not message:
+        return None
+    text = IP_ADDRESS_RE.sub("[redacted-ip]", str(message))
+    text = SECRETISH_RE.sub(r"\1=[redacted]", text)
+    return text[:220]
+
+
 BINANCE_FAPI = os.getenv("BINANCE_FAPI_BASE", "https://fapi.binance.com").rstrip("/")
 BINANCE_WS = os.getenv("BINANCE_WS_BASE", "wss://fstream.binance.com/ws").rstrip("/")
-REQUEST_TIMEOUT_SECONDS = float(os.getenv("SCREENER_REQUEST_TIMEOUT_SECONDS", "6"))
-REST_QUOTE_TTL_SECONDS = float(os.getenv("SCREENER_REST_QUOTE_TTL_SECONDS", "10"))
-DEEP_CACHE_TTL_SECONDS = float(os.getenv("SCREENER_DEEP_CACHE_TTL_SECONDS", "180"))
-DEEP_BATCH_INTERVAL_SECONDS = float(os.getenv("SCREENER_DEEP_BATCH_INTERVAL_SECONDS", "1.5"))
-STREAM_STALE_SECONDS = float(os.getenv("SCREENER_STREAM_STALE_SECONDS", "12"))
-DEEP_BATCH_SIZE = int(os.getenv("SCREENER_DEEP_BATCH_SIZE", "72"))
-DEEP_WORKERS = int(os.getenv("SCREENER_DEEP_WORKERS", "5"))
-MAX_ROWS = int(os.getenv("SCREENER_MAX_ROWS", "420"))
+REQUEST_TIMEOUT_SECONDS = env_float("SCREENER_REQUEST_TIMEOUT_SECONDS", 6, minimum=1, maximum=15)
+REST_QUOTE_TTL_SECONDS = env_float("SCREENER_REST_QUOTE_TTL_SECONDS", 10, minimum=1, maximum=60)
+DEEP_CACHE_TTL_SECONDS = env_float("SCREENER_DEEP_CACHE_TTL_SECONDS", 180, minimum=30, maximum=900)
+DEEP_BATCH_INTERVAL_SECONDS = env_float("SCREENER_DEEP_BATCH_INTERVAL_SECONDS", 1.5, minimum=0.5, maximum=30)
+STREAM_STALE_SECONDS = env_float("SCREENER_STREAM_STALE_SECONDS", 12, minimum=3, maximum=120)
+DEEP_BATCH_SIZE = env_int("SCREENER_DEEP_BATCH_SIZE", 72, minimum=1, maximum=150)
+DEEP_WORKERS = env_int("SCREENER_DEEP_WORKERS", 5, minimum=1, maximum=12)
+MAX_ROWS = env_int("SCREENER_MAX_ROWS", 420, minimum=50, maximum=600)
 ENABLE_WS = os.getenv("SCREENER_ENABLE_WS", "1").lower() in {"1", "true", "yes"}
 PUBLIC_DIR = Path(__file__).resolve().parent / "public"
 
@@ -134,7 +163,7 @@ class BinanceScreenerCache:
 
     def _record_error(self, message: str) -> None:
         with self.lock:
-            self.last_error = message[:300]
+            self.last_error = public_error(message)
 
     def _handle_ticker_payload(self, payload: Any) -> None:
         rows = payload if isinstance(payload, list) else [payload]
@@ -360,7 +389,7 @@ class BinanceScreenerCache:
             klines = self._get("/fapi/v1/klines", {"symbol": symbol, "interval": "1m", "limit": 65})
             metrics.update(metrics_from_binance_klines(klines))
         except Exception as exc:
-            metrics["klinesError"] = str(exc)[:160]
+            self._record_error(f"{symbol} kline metrics unavailable: {exc}")
 
         try:
             oi = self._get("/fapi/v1/openInterest", {"symbol": symbol})
@@ -368,7 +397,7 @@ class BinanceScreenerCache:
             if open_interest and row.get("price"):
                 metrics["oiUsd"] = open_interest * float(row["price"])
         except Exception as exc:
-            metrics["openInterestError"] = str(exc)[:160]
+            self._record_error(f"{symbol} open interest unavailable: {exc}")
 
         try:
             history = self._get(
@@ -377,7 +406,7 @@ class BinanceScreenerCache:
             )
             metrics.update(metrics_from_open_interest_history(history if isinstance(history, list) else []))
         except Exception as exc:
-            metrics["openInterestHistoryError"] = str(exc)[:160]
+            self._record_error(f"{symbol} open interest history unavailable: {exc}")
 
         return metrics
 
@@ -437,7 +466,7 @@ class BinanceScreenerCache:
             "deepTotalRows": len(visible_rows),
             "baseRefreshing": base_refreshing,
             "deepRefreshing": deep_refreshing,
-            "lastError": last_error,
+            "lastError": public_error(last_error),
             "rows": visible_rows,
         }
 
@@ -521,6 +550,21 @@ def add_cors_headers(response):
     response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
     response.headers["Access-Control-Allow-Headers"] = "Content-Type"
     response.headers["Cache-Control"] = "no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' https://unpkg.com; "
+        "style-src 'self'; "
+        "img-src 'self' data:; "
+        "connect-src 'self' https://binance-futures-screener-a39v.onrender.com http://127.0.0.1:8050 http://localhost:8050; "
+        "font-src 'self'; "
+        "base-uri 'self'; "
+        "form-action 'none'; "
+        "frame-ancestors 'none'"
+    )
     return response
 
 

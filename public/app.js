@@ -390,12 +390,9 @@ async function fetchJson(url, options = {}) {
 function resolveApiBase() {
   const params = new URLSearchParams(window.location.search);
   const queryBase = params.get("api");
-  if (queryBase) {
-    window.localStorage?.setItem("screenerApiBase", queryBase);
-    return normalizeApiBase(queryBase);
-  }
+  if (queryBase) return normalizeApiBase(queryBase);
 
-  const configured = window.SCREENER_API_BASE || window.localStorage?.getItem("screenerApiBase");
+  const configured = window.SCREENER_API_BASE;
   if (configured) return normalizeApiBase(configured);
 
   if (window.location.hostname.endsWith("github.io")) {

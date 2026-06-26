@@ -1,32 +1,41 @@
 # Binance Futures Screener
 
-Realtime Binance USD-M Futures screener with a lightweight Python backend cache and a dark-mode trading-terminal interface.
+[Live app](https://binance-futures-screener-a39v.onrender.com) |
+[GitHub repository](https://github.com/THECRYPTOTOM/binance-futures-screener)
 
-Live app:
+A standalone realtime screener for Binance USD-M perpetual futures. It gives traders, analysts, and market surveillance reviewers a fast way to scan the futures universe for unusual movement, volume, open interest, funding, volatility, and short-term trade activity.
 
-https://binance-futures-screener-a39v.onrender.com
-
-This is an independent portfolio project. It is not coupled to a larger dashboard repo, Dash, Plotly, Pandas, CCXT, PostgreSQL, or any private exchange credentials.
+This project is intentionally independent. It does not depend on Dash, Plotly, Pandas, CCXT, PostgreSQL, another dashboard repo, or private exchange credentials.
 
 ## What It Does
 
-- Streams or fetches Binance Futures market data server-side.
-- Serves a browser screener that refreshes every 1 second.
-- Ranks symbols by price movement, volume, open interest, funding, volatility, and trade count.
-- Uses a backend cache so visitors do not hit Binance directly from their own IP.
-- Progressively hydrates deep metrics across the full futures universe instead of only enriching the top symbols.
-- Shows clear UTC timestamps and cache freshness.
+- Fetches public Binance Futures data server-side.
+- Serves a dark-mode browser screener that refreshes every second.
+- Tracks price, 5-minute change, 1-hour change, 24-hour change, volume, open interest, funding, volatility, and 5-minute trade count.
+- Uses a shared backend cache so every visitor is not hitting Binance from their own browser.
+- Hydrates heavier per-symbol metrics in rolling batches so the app stays responsive on small hosting plans.
+- Shows UTC timestamps, cache age, hydration progress, and feed status in the UI.
 - Runs on Render Free, Docker, or any small Python web host.
+
+## Live Demo
+
+```text
+https://binance-futures-screener-a39v.onrender.com
+```
+
+The hosted app uses public Binance market-data endpoints only. There is no account connection and no trading functionality.
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-  A["Binance Futures WebSocket"] --> C["Python cache"]
+  A["Binance Futures WebSocket"] --> C["Python backend cache"]
   B["Binance Futures REST fallback"] --> C
   C --> D["/api/screener"]
   D --> E["Dark-mode frontend"]
 ```
+
+The backend prefers Binance WebSocket ticker streams for fresh quote data. If the stream is not warm yet, it can fall back to Binance REST. Heavier metrics such as open interest, 1-hour volume, volatility, and trade count are fetched separately in controlled batches.
 
 ## Tech Stack
 
@@ -34,8 +43,9 @@ flowchart LR
 - Flask
 - Requests
 - websocket-client
-- Vanilla HTML/CSS/JavaScript
+- Vanilla HTML, CSS, and JavaScript
 - Gunicorn
+- Render / Docker deployment
 
 ## Local Run
 
@@ -58,7 +68,7 @@ Health check:
 http://127.0.0.1:8050/api/healthz
 ```
 
-Screener API:
+API:
 
 ```text
 http://127.0.0.1:8050/api/screener
@@ -66,14 +76,16 @@ http://127.0.0.1:8050/api/screener
 
 ## Signal Score
 
-The `Sig` column is a 0-100 anomaly score. It is calculated by this app, not by Binance.
+The `Sig` column is a 0-100 anomaly score calculated by this app. Binance does not provide this number.
+
+The score is designed for triage, not prediction. A high score means a symbol deserves attention because several market conditions are unusual at the same time. A low score means the symbol is behaving closer to normal market noise based on the available public data.
 
 Inputs:
 
-- absolute 5-minute return
-- absolute 1-hour return
-- absolute 1-day return
-- 15-minute volatility
+- absolute 5-minute price move
+- absolute 1-hour price move
+- absolute 24-hour price move
+- 15-minute high-low volatility
 - absolute 1-hour open-interest change
 - absolute funding rate
 - 24-hour notional volume bonus
@@ -87,11 +99,17 @@ Score bands:
 | 70-84 | Strong anomaly |
 | 85-100 | Priority review |
 
+## Why Some Cells Say `queued`
+
+Binance publishes quote-level fields for all futures markets quickly. Deep metrics are heavier because they require extra requests per symbol.
+
+To avoid hammering Binance and getting the backend IP rate-limited, the service hydrates those deeper fields in batches. Right after a deploy or restart, lower-volume rows may briefly show `queued`. As the hydration queue progresses, those cells fill in automatically.
+
 ## API Contract
 
 `GET /api/screener`
 
-Returns:
+Example response shape:
 
 ```json
 {
@@ -104,35 +122,15 @@ Returns:
   "cacheAgeMs": 180,
   "streamAgeMs": 420,
   "quoteRefreshMs": 1000,
-  "deepRefreshMs": 60000,
+  "deepRefreshMs": 180000,
+  "deepHydratedCount": 420,
+  "deepQueuedCount": 0,
+  "deepTotalRows": 420,
   "baseRefreshing": false,
   "deepRefreshing": false,
   "lastError": null,
   "rows": []
 }
-```
-
-## Deployment
-
-### Render
-
-Create a new Render Blueprint from this repository. `render.yaml` defines a free web service named:
-
-```text
-binance-futures-screener
-```
-
-Current Render URL:
-
-```text
-https://binance-futures-screener-a39v.onrender.com
-```
-
-### Docker
-
-```bash
-docker build -t binance-futures-screener .
-docker run --rm -p 8050:7860 binance-futures-screener
 ```
 
 ## Environment Variables
@@ -145,26 +143,51 @@ docker run --rm -p 8050:7860 binance-futures-screener
 | `SCREENER_DEEP_BATCH_INTERVAL_SECONDS` | `1.5` | Minimum pause between hydration batches |
 | `SCREENER_DEEP_BATCH_SIZE` | `72` | Symbols hydrated per backend batch |
 | `SCREENER_DEEP_WORKERS` | `5` | Concurrent deep metric workers |
-| `SCREENER_ALLOWED_ORIGINS` | `*` | CORS origin allowlist |
+| `SCREENER_ALLOWED_ORIGINS` | `*` locally | CORS allowlist for browser clients |
 
-## Why Some Cells Can Say `queued`
+Production clamps the numeric settings to reasonable ranges so a bad environment value cannot accidentally overload the host or Binance.
 
-Quote-level fields are available for all Binance markets almost immediately. Heavier fields such as 5-minute change, 1-hour volume, open interest, volatility, and trade count require extra per-symbol requests.
+## Deployment
 
-To avoid hammering Binance and getting the backend IP rate-limited, the server hydrates those deep metrics in rolling batches. Freshly started services may show `queued` for lower-volume rows for a short time. As the queue progresses, those cells fill in automatically.
+### Render
 
-## Security
+Create a Render Blueprint from this repository. `render.yaml` defines a free web service named:
 
-This app uses public Binance market-data endpoints only.
+```text
+binance-futures-screener
+```
 
-It does not use:
+The current Render app is:
+
+```text
+https://binance-futures-screener-a39v.onrender.com
+```
+
+### Docker
+
+```bash
+docker build -t binance-futures-screener .
+docker run --rm -p 8050:7860 binance-futures-screener
+```
+
+## Security Posture
+
+This is a read-only public market-data app.
+
+It does not use or store:
 
 - passwords
 - private API keys
 - exchange account credentials
 - database credentials
-- sessions
+- seed phrases
+- wallet keys
+- user sessions
+
+The backend also avoids returning raw upstream error details that could expose infrastructure information, applies basic browser security headers, and restricts CORS in the production Render configuration.
+
+If you fork this project, keep it read-only unless you have a strong reason to do otherwise. Do not add trading permissions, private exchange keys, wallet secrets, or real `.env` files to the repository.
 
 ## Limitations
 
-Public market data is useful for realtime triage, but it does not prove trader intent or account-level misconduct. Binance may rate-limit or block hosting-provider IPs. The backend cache centralizes that risk and makes it easier to manage than browser-direct exchange calls.
+Public futures data is useful for realtime scanning, but it does not prove trader intent or account-level misconduct. Binance may also rate-limit or block hosting-provider IPs. The backend cache centralizes that risk and makes it easier to manage than browser-direct exchange calls.
