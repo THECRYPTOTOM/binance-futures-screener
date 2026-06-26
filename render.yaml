@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: binance-futures-screener
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: gunicorn server:server --bind 0.0.0.0:$PORT --workers 1 --threads 8 --timeout 120 --max-requests 500 --max-requests-jitter 80
+    healthCheckPath: /api/healthz
+    autoDeployTrigger: commit
+    envVars:
+      - key: SCREENER_ALLOWED_ORIGINS
+        value: "*"
+      - key: SCREENER_ENABLE_WS
+        value: "1"
+      - key: SCREENER_REST_QUOTE_TTL_SECONDS
+        value: "10"
+      - key: SCREENER_DEEP_TTL_SECONDS
+        value: "60"
+      - key: SCREENER_HYDRATE_LIMIT
+        value: "56"
+      - key: SCREENER_DEEP_WORKERS
+        value: "5"
