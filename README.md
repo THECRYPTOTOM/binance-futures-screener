@@ -2,6 +2,10 @@
 
 Realtime Binance USD-M Futures screener with a lightweight Python backend cache and a dark-mode trading-terminal interface.
 
+Live app:
+
+https://binance-futures-screener-a39v.onrender.com
+
 This is an independent portfolio project. It is not coupled to a larger dashboard repo, Dash, Plotly, Pandas, CCXT, PostgreSQL, or any private exchange credentials.
 
 ## What It Does
@@ -117,10 +121,10 @@ Create a new Render Blueprint from this repository. `render.yaml` defines a free
 binance-futures-screener
 ```
 
-The expected Render URL is:
+Current Render URL:
 
 ```text
-https://binance-futures-screener.onrender.com
+https://binance-futures-screener-a39v.onrender.com
 ```
 
 ### Docker

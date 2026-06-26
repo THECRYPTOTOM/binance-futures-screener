@@ -1,4 +1,4 @@
-const DEFAULT_REMOTE_API_BASE = "https://binance-futures-screener.onrender.com";
+const DEFAULT_REMOTE_API_BASE = "https://binance-futures-screener-a39v.onrender.com";
 
 const CONFIG = {
   quoteRefreshMs: 1_000,
