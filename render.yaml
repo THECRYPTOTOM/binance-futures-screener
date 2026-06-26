@@ -10,7 +10,7 @@ services:
     autoDeployTrigger: commit
     envVars:
       - key: SCREENER_ALLOWED_ORIGINS
-        value: https://binance-futures-screener-a39v.onrender.com,https://thecryptotom.github.io
+        value: https://binance-futures-screener-a39v.onrender.com,https://unrealwandregime.github.io
       - key: SCREENER_ENABLE_WS
         value: "1"
       - key: SCREENER_REST_QUOTE_TTL_SECONDS

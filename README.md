@@ -1,7 +1,7 @@
 # Binance Futures Screener
 
 [Live app](https://binance-futures-screener-a39v.onrender.com) |
-[GitHub repository](https://github.com/THECRYPTOTOM/binance-futures-screener)
+[GitHub repository](https://github.com/unrealwandregime/binance-futures-screener)
 
 A standalone realtime screener for Binance USD-M perpetual futures. It gives traders, analysts, and market surveillance reviewers a fast way to scan the futures universe for unusual movement, volume, open interest, funding, volatility, and short-term trade activity.
 
