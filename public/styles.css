@@ -567,11 +567,13 @@ td {
 }
 
 .empty-value,
-.unavailable-value {
+.unavailable-value,
+.pending-value {
   color: var(--muted-2);
 }
 
-.unavailable-value {
+.unavailable-value,
+.pending-value {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -583,6 +585,14 @@ td {
   font-size: 11px;
   font-weight: 820;
   letter-spacing: 0.03em;
+}
+
+.pending-value {
+  min-width: 52px;
+  border-color: rgba(245, 165, 36, 0.24);
+  color: #d6b66f;
+  background: rgba(245, 165, 36, 0.055);
+  text-transform: uppercase;
 }
 
 .loading-state,

@@ -14,6 +14,7 @@ This is an independent portfolio project. It is not coupled to a larger dashboar
 - Serves a browser screener that refreshes every 1 second.
 - Ranks symbols by price movement, volume, open interest, funding, volatility, and trade count.
 - Uses a backend cache so visitors do not hit Binance directly from their own IP.
+- Progressively hydrates deep metrics across the full futures universe instead of only enriching the top symbols.
 - Shows clear UTC timestamps and cache freshness.
 - Runs on Render Free, Docker, or any small Python web host.
 
@@ -140,10 +141,17 @@ docker run --rm -p 8050:7860 binance-futures-screener
 | --- | --- | --- |
 | `SCREENER_ENABLE_WS` | `1` | Enables Binance WebSocket streams |
 | `SCREENER_REST_QUOTE_TTL_SECONDS` | `10` | REST fallback cooldown |
-| `SCREENER_DEEP_TTL_SECONDS` | `60` | Deep metric cache lifetime |
-| `SCREENER_HYDRATE_LIMIT` | `56` | Number of top symbols hydrated with deep metrics |
+| `SCREENER_DEEP_CACHE_TTL_SECONDS` | `180` | Deep metric cache lifetime |
+| `SCREENER_DEEP_BATCH_INTERVAL_SECONDS` | `1.5` | Minimum pause between hydration batches |
+| `SCREENER_DEEP_BATCH_SIZE` | `72` | Symbols hydrated per backend batch |
 | `SCREENER_DEEP_WORKERS` | `5` | Concurrent deep metric workers |
 | `SCREENER_ALLOWED_ORIGINS` | `*` | CORS origin allowlist |
+
+## Why Some Cells Can Say `queued`
+
+Quote-level fields are available for all Binance markets almost immediately. Heavier fields such as 5-minute change, 1-hour volume, open interest, volatility, and trade count require extra per-symbol requests.
+
+To avoid hammering Binance and getting the backend IP rate-limited, the server hydrates those deep metrics in rolling batches. Freshly started services may show `queued` for lower-volume rows for a short time. As the queue progresses, those cells fill in automatically.
 
 ## Security
 

@@ -26,6 +26,8 @@ const COLUMNS = [
   { key: "score", label: "Sig", title: "0-100 anomaly signal score" },
 ];
 
+const DEEP_METRIC_KEYS = new Set(["chg5m", "chg1h", "vol1h", "oiUsd", "oiChg1h", "volatility15m", "trades5m"]);
+
 const state = {
   exchange: "binance",
   preset: "all",
@@ -271,6 +273,7 @@ function renderCell(row, key) {
   if (key === "symbol") {
     return `<div class="symbol-cell"><strong>${escapeHtml(row.symbol)}</strong><span>${escapeHtml(row.venue || "Binance Futures")}</span></div>`;
   }
+  if (DEEP_METRIC_KEYS.has(key) && !row.deepHydrated) return queuedValue();
   if (key === "price") return formatPrice(row.price);
   if (key === "chg5m" || key === "chg1h" || key === "chg1d" || key === "oiChg1h") return pctCell(row[key], 2);
   if (key === "vol1h" || key === "quoteVolume24h" || key === "oiUsd") return formatUsd(row[key]);
@@ -316,8 +319,11 @@ function updateTableMeta(rows) {
     : payload.deepGeneratedAt
       ? `Deep metrics ${utcTime(Date.parse(payload.deepGeneratedAt))}`
       : "Deep metrics pending";
+  const hydrationText = isFiniteNumber(payload.deepHydratedCount)
+    ? `hydrated ${Number(payload.deepHydratedCount).toLocaleString()}/${Number(payload.deepTotalRows || state.rows.length).toLocaleString()}`
+    : "hydration queued";
   const cacheText = isFiniteNumber(payload.cacheAgeMs) ? `cache age ${(Number(payload.cacheAgeMs) / 1000).toFixed(1)}s` : "cache warming";
-  els.deepRefresh.textContent = `${deepText} | ${cacheText} | showing ${rows.length} symbols`;
+  els.deepRefresh.textContent = `${deepText} | ${hydrationText} | ${cacheText} | showing ${rows.length} symbols`;
 }
 
 function renderLoadingState() {
@@ -496,6 +502,10 @@ function utcTime(value) {
 
 function emptyValue() {
   return `<span class="empty-value">--</span>`;
+}
+
+function queuedValue() {
+  return `<span class="pending-value" title="Queued for backend deep-metric hydration">queued</span>`;
 }
 
 function escapeHtml(value) {

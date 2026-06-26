@@ -15,9 +15,11 @@ services:
         value: "1"
       - key: SCREENER_REST_QUOTE_TTL_SECONDS
         value: "10"
-      - key: SCREENER_DEEP_TTL_SECONDS
-        value: "60"
-      - key: SCREENER_HYDRATE_LIMIT
-        value: "56"
+      - key: SCREENER_DEEP_CACHE_TTL_SECONDS
+        value: "180"
+      - key: SCREENER_DEEP_BATCH_INTERVAL_SECONDS
+        value: "1.5"
+      - key: SCREENER_DEEP_BATCH_SIZE
+        value: "72"
       - key: SCREENER_DEEP_WORKERS
         value: "5"

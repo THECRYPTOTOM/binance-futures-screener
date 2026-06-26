@@ -22,9 +22,10 @@ BINANCE_FAPI = os.getenv("BINANCE_FAPI_BASE", "https://fapi.binance.com").rstrip
 BINANCE_WS = os.getenv("BINANCE_WS_BASE", "wss://fstream.binance.com/ws").rstrip("/")
 REQUEST_TIMEOUT_SECONDS = float(os.getenv("SCREENER_REQUEST_TIMEOUT_SECONDS", "6"))
 REST_QUOTE_TTL_SECONDS = float(os.getenv("SCREENER_REST_QUOTE_TTL_SECONDS", "10"))
-DEEP_TTL_SECONDS = float(os.getenv("SCREENER_DEEP_TTL_SECONDS", "60"))
+DEEP_CACHE_TTL_SECONDS = float(os.getenv("SCREENER_DEEP_CACHE_TTL_SECONDS", os.getenv("SCREENER_DEEP_TTL_SECONDS", "180")))
+DEEP_BATCH_INTERVAL_SECONDS = float(os.getenv("SCREENER_DEEP_BATCH_INTERVAL_SECONDS", "1.5"))
 STREAM_STALE_SECONDS = float(os.getenv("SCREENER_STREAM_STALE_SECONDS", "12"))
-HYDRATE_LIMIT = int(os.getenv("SCREENER_HYDRATE_LIMIT", "56"))
+DEEP_BATCH_SIZE = int(os.getenv("SCREENER_DEEP_BATCH_SIZE", os.getenv("SCREENER_HYDRATE_LIMIT", "72")))
 DEEP_WORKERS = int(os.getenv("SCREENER_DEEP_WORKERS", "5"))
 MAX_ROWS = int(os.getenv("SCREENER_MAX_ROWS", "420"))
 ENABLE_WS = os.getenv("SCREENER_ENABLE_WS", "1").lower() in {"1", "true", "yes"}
@@ -100,6 +101,7 @@ class BinanceScreenerCache:
         self.deep_refreshing = False
         self.streams_started = False
         self.rest_backoff_until = 0.0
+        self.last_deep_batch_started_at = 0.0
 
     def ensure_streams(self) -> None:
         if not ENABLE_WS or websocket is None:
@@ -172,6 +174,8 @@ class BinanceScreenerCache:
 
         with self.lock:
             rows = list(self.rows)
+        if rows:
+            self._maybe_start_deep_refresh(rows)
         return self._payload(rows, source="binance_rest_cache")
 
     def _has_rows(self) -> bool:
@@ -297,19 +301,33 @@ class BinanceScreenerCache:
         return response.json()
 
     def _maybe_start_deep_refresh(self, base_rows: list[dict[str, Any]]) -> None:
+        now = time.monotonic()
         with self.lock:
             if self.deep_refreshing:
                 return
-            due = (
-                self.deep_generated_at is None
-                or (utc_now() - self.deep_generated_at).total_seconds() >= DEEP_TTL_SECONDS
-            )
-            if not due:
+            if now - self.last_deep_batch_started_at < DEEP_BATCH_INTERVAL_SECONDS:
                 return
+            rows = self._select_deep_rows_locked(base_rows, now)
+            if not rows:
+                return
+            self.last_deep_batch_started_at = now
             self.deep_refreshing = True
 
-        rows = base_rows[:HYDRATE_LIMIT]
         threading.Thread(target=self._refresh_deep_worker, args=(rows,), daemon=True).start()
+
+    def _select_deep_rows_locked(self, base_rows: list[dict[str, Any]], now: float) -> list[dict[str, Any]]:
+        uncached = []
+        stale = []
+        for row in base_rows:
+            symbol = str(row.get("symbol", ""))
+            if not symbol:
+                continue
+            cached = self.deep_cache.get(symbol)
+            if not cached:
+                uncached.append(row)
+            elif now - float(cached.get("ts", 0.0)) >= DEEP_CACHE_TTL_SECONDS:
+                stale.append(row)
+        return (uncached + stale)[:DEEP_BATCH_SIZE]
 
     def _refresh_deep_worker(self, rows: list[dict[str, Any]]) -> None:
         try:
@@ -368,11 +386,14 @@ class BinanceScreenerCache:
             deep_cache = dict(self.deep_cache)
 
         merged_rows = []
+        now = time.monotonic()
         for row in rows:
             merged = dict(row)
             cached = deep_cache.get(str(row.get("symbol")))
             if cached:
                 merged.update(cached.get("data") or {})
+            merged["deepHydrated"] = bool(cached)
+            merged["deepStale"] = bool(cached and now - float(cached.get("ts", 0.0)) >= DEEP_CACHE_TTL_SECONDS)
             merged["score"] = compute_signal_score(merged)
             merged_rows.append(merged)
         return sorted(merged_rows, key=lambda item: item.get("quoteVolume24h") or 0, reverse=True)
@@ -384,9 +405,12 @@ class BinanceScreenerCache:
             last_error = self.last_error
             deep_refreshing = self.deep_refreshing
             base_refreshing = self.base_refreshing
+            deep_cache = dict(self.deep_cache)
 
         stream_age = self._stream_age_seconds()
         cache_age = (utc_now() - generated_at).total_seconds() if generated_at else None
+        visible_rows = rows[:MAX_ROWS]
+        deep_hydrated_count = sum(1 for row in visible_rows if str(row.get("symbol")) in deep_cache)
         if rows and (stream_age is None or stream_age <= STREAM_STALE_SECONDS):
             status = "live"
         elif rows:
@@ -406,11 +430,15 @@ class BinanceScreenerCache:
             "cacheAgeMs": round(cache_age * 1000) if cache_age is not None else None,
             "streamAgeMs": round(stream_age * 1000) if stream_age is not None else None,
             "quoteRefreshMs": 1000,
-            "deepRefreshMs": round(DEEP_TTL_SECONDS * 1000),
+            "deepRefreshMs": round(DEEP_CACHE_TTL_SECONDS * 1000),
+            "deepBatchSize": DEEP_BATCH_SIZE,
+            "deepHydratedCount": deep_hydrated_count,
+            "deepQueuedCount": max(0, len(visible_rows) - deep_hydrated_count),
+            "deepTotalRows": len(visible_rows),
             "baseRefreshing": base_refreshing,
             "deepRefreshing": deep_refreshing,
             "lastError": last_error,
-            "rows": rows[:MAX_ROWS],
+            "rows": visible_rows,
         }
 
 
